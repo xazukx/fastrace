@@ -338,6 +338,20 @@ impl Default for SpanContext {
     }
 }
 
+impl serde::Serialize for SpanContext {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.encode_w3c_traceparent().serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SpanContext {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        SpanContext::decode_w3c_traceparent(&s)
+            .ok_or_else(|| serde::de::Error::custom("invalid w3c traceparent"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
