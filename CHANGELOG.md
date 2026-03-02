@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Notable Changes
+
+- Upgrade MSRV to 1.85 and Edition to 2024.
+
 ## v0.7.17
 
 ### Breaking Changes
