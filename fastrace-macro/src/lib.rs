@@ -202,6 +202,7 @@ pub fn trace(
 struct Args {
     name: Option<LitStr>,
     short_name: bool,
+    async_root: bool,
     enter_on_poll: bool,
     properties: Vec<(LitStr, LitStr)>,
     crate_path: Path,
@@ -212,6 +213,7 @@ impl Default for Args {
         Self {
             name: None,
             short_name: false,
+            async_root: false,
             enter_on_poll: false,
             properties: Vec::new(),
             crate_path: parse_quote!(::fastrace),
@@ -237,6 +239,7 @@ impl Parse for Args {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut name = None;
         let mut short_name = false;
+        let mut async_root = false;
         let mut enter_on_poll = false;
         let mut properties = Vec::new();
         let mut crate_path = parse_quote!(::fastrace);
@@ -251,36 +254,44 @@ impl Parse for Args {
                 return Err(Error::new(key.span(), "duplicate argument"));
             }
             seen.insert(key.clone());
-            input.parse::<Token![=]>()?;
-            match key.to_string().as_str() {
-                "name" => {
-                    let parsed_name: LitStr = input.parse()?;
-                    name = Some(parsed_name);
-                }
-                "short_name" => {
-                    let parsed_short_name: LitBool = input.parse()?;
-                    short_name = parsed_short_name.value;
-                }
-                "enter_on_poll" => {
-                    let parsed_enter_on_poll: LitBool = input.parse()?;
-                    enter_on_poll = parsed_enter_on_poll.value;
-                }
-                "properties" => {
-                    let content;
-                    let _brace_token = braced!(content in input);
-                    let property_list = content.parse_terminated(Property::parse, Token![,])?;
-                    for property in property_list {
-                        if properties.iter().any(|(k, _)| k == &property.key) {
-                            return Err(Error::new(Span::call_site(), "duplicate property key"));
-                        }
-                        properties.push((property.key, property.value));
+            let key_name = key.to_string();
+            if key_name == "async_root" && !input.peek(Token![=]) {
+                async_root = true;
+            } else {
+                input.parse::<Token![=]>()?;
+                match key_name.as_str() {
+                    "name" => {
+                        let parsed_name: LitStr = input.parse()?;
+                        name = Some(parsed_name);
                     }
+                    "short_name" => {
+                        let parsed_short_name: LitBool = input.parse()?;
+                        short_name = parsed_short_name.value;
+                    }
+                    "enter_on_poll" => {
+                        let parsed_enter_on_poll: LitBool = input.parse()?;
+                        enter_on_poll = parsed_enter_on_poll.value;
+                    }
+                    "properties" => {
+                        let content;
+                        let _brace_token = braced!(content in input);
+                        let property_list = content.parse_terminated(Property::parse, Token![,])?;
+                        for property in property_list {
+                            if properties.iter().any(|(k, _)| k == &property.key) {
+                                return Err(Error::new(
+                                    Span::call_site(),
+                                    "duplicate property key",
+                                ));
+                            }
+                            properties.push((property.key, property.value));
+                        }
+                    }
+                    "crate" => {
+                        let parsed_crate_path: Path = input.parse()?;
+                        crate_path = parsed_crate_path;
+                    }
+                    _ => return Err(Error::new(Span::call_site(), "unexpected identifier")),
                 }
-                "crate" => {
-                    let parsed_crate_path: Path = input.parse()?;
-                    crate_path = parsed_crate_path;
-                }
-                _ => return Err(Error::new(Span::call_site(), "unexpected identifier")),
             }
             if !input.is_empty() {
                 let _ = input.parse::<Token![,]>();
@@ -290,6 +301,7 @@ impl Parse for Args {
         Ok(Args {
             name,
             short_name,
+            async_root,
             enter_on_poll,
             properties,
             crate_path,
@@ -351,6 +363,15 @@ fn gen_block(
     args: &Args,
     output_ty: Option<Type>,
 ) -> proc_macro2::TokenStream {
+    if args.async_root {
+        if !async_context {
+            abort_call_site!("`async_root` can only be applied on async function");
+        }
+        if args.enter_on_poll {
+            abort_call_site!("`async_root` can not be used with `enter_on_poll`");
+        }
+    }
+
     let name = gen_name(func_name, args);
     let properties = gen_properties(args);
     let crate_path = &args.crate_path;
@@ -370,9 +391,14 @@ fn gen_block(
                 )
             )
         } else {
+            let span_ctor = if args.async_root {
+                quote!(#crate_path::Span::root(#name, #crate_path::prelude::SpanContext::random()))
+            } else {
+                quote!(#crate_path::Span::enter_with_local_parent(#name))
+            };
             quote!(
                 {
-                    let __span__ = #crate_path::Span::enter_with_local_parent( #name ) #properties;
+                    let __span__ = #span_ctor #properties;
                     #crate_path::future::FutureExt::in_span(
                         async move {
                             let __ret__: #output_ty_hint = #block;

@@ -440,6 +440,30 @@ fn macro_example() {
 
 #[test]
 #[serial]
+fn macro_async_root() {
+    #[trace(async_root, short_name = true, properties = { "k": "v" })]
+    async fn work() {
+        tokio::task::yield_now().await;
+    }
+
+    let (reporter, collected_spans) = TestReporter::new();
+    fastrace::set_reporter(reporter, Config::default());
+
+    pollster::block_on(work());
+
+    fastrace::flush();
+
+    let spans = collected_spans.lock().clone();
+    assert_eq!(spans.len(), 1);
+
+    let span = &spans[0];
+    assert_eq!(span.name, "work");
+    assert_eq!(span.properties, vec![("k".into(), "v".into())],);
+    assert_eq!(span.parent_id, SpanId::default());
+}
+
+#[test]
+#[serial]
 fn multiple_local_parent() {
     let (reporter, collected_spans) = TestReporter::new();
     fastrace::set_reporter(reporter, Config::default());

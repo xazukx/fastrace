@@ -30,6 +30,9 @@ use std::time::Duration;
 use fastrace::collector::Config;
 use fastrace::collector::ConsoleReporter;
 
+#[fastrace::trace(async_root)]
+async fn async_root_disabled() {}
+
 fn main() {
     use fastrace::local::LocalCollector;
     use fastrace::prelude::*;
@@ -92,4 +95,6 @@ fn main() {
     root.cancel();
 
     fastrace::flush();
+
+    let _ = async_root_disabled();
 }
